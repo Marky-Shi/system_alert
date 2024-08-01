@@ -1,0 +1,11 @@
+[package]
+name = "system-alert"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.5.11"
+termion = "4.0.2"
+sysinfo = "0.31.0"
+libc = "0.2.155"
+tui = { version = "0.19", default-features = false, features = ['termion'] }
