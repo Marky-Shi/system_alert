@@ -1,5 +1,5 @@
 use std::{io, sync::mpsc, thread, time::Duration};
-use sysinfo::{Components, Disks, Networks, System};
+use sysinfo::{Components, Networks, System};
 use termion::{
     color as tcolor,
     event::{Event, Key},
@@ -15,6 +15,7 @@ use tui::{
     Terminal,
 };
 
+use crate::cli::get_disk_info;
 pub fn check_exit() -> mpsc::Receiver<bool> {
     let (tx, rx) = mpsc::channel();
 
@@ -56,22 +57,8 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
             .iter()
             .map(|cpu| cpu.cpu_usage())
             .collect::<Vec<_>>();
-
-        // Get disk information
-        let disks = Disks::new_with_refreshed_list();
-        let disk_info: Vec<String> = disks
-            .iter()
-            .map(|disk| {
-                format!(
-                    "{}{}{}: {}/{} B",
-                    tcolor::Fg(tcolor::Green),
-                    tcolor::Bg(tcolor::LightMagenta),
-                    disk.name().to_string_lossy(),
-                    disk.available_space(),
-                    disk.total_space()
-                )
-            })
-            .collect();
+        
+        let disk_info = get_disk_info();
 
         // Get network information
         let networks = Networks::new_with_refreshed_list();
@@ -94,7 +81,7 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
             .iter()
             .map(|component| {
                 format!(
-                    "{}{}: {}°C",
+                    "{}{}: {:.2}°C",
                     tcolor::Fg(tcolor::LightGreen),
                     component.label(),
                     component.temperature()
@@ -136,9 +123,11 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
                 .direction(Direction::Horizontal)
                 .constraints(
                     [
-                        Constraint::Percentage(33), // Left third
-                        Constraint::Percentage(33), // Middle third
-                        Constraint::Percentage(34), // Right third
+                        Constraint::Percentage(20), // Left third
+                        Constraint::Percentage(10), // middle left
+                        Constraint::Percentage(17), // middle right 
+                        Constraint::Percentage(33),
+                        Constraint::Percentage(20) // Right third
                     ]
                     .as_ref(),
                 )
@@ -149,8 +138,9 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
                 .direction(Direction::Horizontal)
                 .constraints(
                     [
-                        Constraint::Percentage(50), // Left half
-                        Constraint::Percentage(50), // Right half
+                        Constraint::Percentage(50),// LEFT
+                        Constraint::Percentage(50), // RIGHT
+                         // Right half
                     ]
                     .as_ref(),
                 )
@@ -162,25 +152,25 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
                 format!("{}CPU {}: {:.2}%",tcolor::Fg(tcolor::Red), i, usage)
             }).collect::<Vec<_>>().join("\n")))
                 .block(cpu_info_block);
-            f.render_widget(cpu_info, top_chunks[0]);
+            f.render_widget(cpu_info, top_chunks[1]);
 
             // Create a block for Component Temperatures
             let component_info_block = Block::default().title("Component Temperatures").borders(Borders::ALL);
             let component_info_paragraph = Paragraph::new(Text::raw(component_temps.join("\n")))
                 .block(component_info_block);
-            f.render_widget(component_info_paragraph, top_chunks[1]);
+            f.render_widget(component_info_paragraph, top_chunks[2]);
 
             // Create a block for DiskINFO
             let disk_info_block = Block::default().title("DiskINFO").borders(Borders::ALL);
-            let disk_info_paragraph = Paragraph::new(Text::raw(disk_info.join("\n")))
+            let disk_info_paragraph = Paragraph::new(Text::raw(disk_info))
                 .block(disk_info_block);
-            f.render_widget(disk_info_paragraph, top_chunks[2]);
+            f.render_widget(disk_info_paragraph, top_chunks[3]);
 
             // Create a block for NetworkINFO
             let network_info_block = Block::default().title("NetworkINFO").borders(Borders::ALL);
             let network_info_paragraph = Paragraph::new(Text::raw(network_info.join("\n")))
                 .block(network_info_block);
-            f.render_widget(network_info_paragraph, top_chunks[2]);
+            f.render_widget(network_info_paragraph, top_chunks[4]);
 
             // Create a block for MemoryINFO
             let memory_info_block = Block::default().title("MemoryINFO").borders(Borders::ALL);
@@ -208,15 +198,16 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
             // Create a block for OSINFO
             let os_info_block = Block::default().title("OSINFO").borders(Borders::ALL);
             let os_info = Paragraph::new(Text::raw(format!(
-                "System name:             {:?}\nSystem kernel version:   {:?}\nSystem OS version:       {:?}\nSystem host name:        {:?}\nSystem CPU architecture: {:?}",
+                "System name:             {:?}\nSystem kernel version:   {:?}\nSystem OS version:       {:?}\nSystem host name:        {:?}\nSystem CPU architecture: {:?}\nSystem CPU Name:        {:?}",
                 System::name().unwrap(),
                 System::kernel_version().unwrap(),
                 System::os_version().unwrap(),
                 System::host_name().unwrap(),
-                System::cpu_arch().unwrap()
+                System::cpu_arch().unwrap(),
+                sys.cpus()[0].brand(),
             )))
                 .block(os_info_block);
-            f.render_widget(os_info, bottom_chunks[0]);
+            f.render_widget(os_info, top_chunks[0]);
 
             // Create a block for Process info
             let process_info_block = Block::default().title("Process Info").borders(Borders::ALL);
