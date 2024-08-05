@@ -3,11 +3,12 @@ use system_alert::{
     system_info::get_system_info,
 };
 
-fn main() {
-    check_root();
-
-    let receiver = check_exit();
-    if let Err(err) = get_system_info(receiver) {
-        eprintln!("Error: {}", err);
-    }
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    check_root().await?;
+    let receiver = check_exit().await;
+    get_system_info(receiver)
+        .await
+        .expect("get system info failed");
+    Ok(())
 }
