@@ -11,3 +11,11 @@ libc = "0.2.155"
 tui = { version = "0.19", default-features = false, features = ['termion'] }
 regex = "1.7.0"
 tokio ={ version = "1.25.0", features = ["full"] }
+
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
