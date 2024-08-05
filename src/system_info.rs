@@ -1,6 +1,5 @@
-use crate::cli::get_powermetrics_output;
-use std::sync::mpsc;
-use std::{io, thread, time::Duration};
+use crate::{cli::get_powermetrics_output, types::CPUMetrics};
+use std::{io, str, thread, time::Duration};
 use sysinfo::{Components, Networks, System};
 use termion::{color as tcolor, raw::IntoRawMode};
 use tui::text::Text;
@@ -13,36 +12,11 @@ use tui::{
 };
 
 use regex::Regex;
-use std::str;
+use tokio::sync::mpsc as tokio_mpsc;
 
-#[derive(Default, Debug)]
-struct CPUMetrics {
-    e_cluster_active: i32,
-    p_cluster_active: i32,
-    e_cluster_freq_mhz: i32,
-    p_cluster_freq_mhz: i32,
-    cpu_w: f64,
-    gpu_w: f64,
-    ane_w: f64,
-    package_w: f64,
-}
-
-impl std::fmt::Display for CPUMetrics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "e_cluster_active: {}\n p_cluster_active: {}\n e_cluster_freq_mhz: {}\n p_cluster_freq_mhz: {}\n cpu_w: {}\n gpu_w: {}\n ane_w: {}\n package_w: {}\n",
-        self.e_cluster_active,
-        self.p_cluster_active,
-        self.p_cluster_freq_mhz,
-        self.p_cluster_freq_mhz,
-        self.cpu_w,
-        self.gpu_w,
-        self.ane_w,
-        self.package_w,
-        )
-    }
-}
-
-pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
+pub async fn get_system_info(
+    mut receiver: tokio_mpsc::Receiver<bool>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let stdout = io::stdout().into_raw_mode()?;
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -75,8 +49,10 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
            )
         }).collect();
 
-        let cpu_power = get_powermetrics_output();
-        let s = parse_cpu_metrics(cpu_power, sys.cpus()[0].brand());
+        let cpu_power = get_powermetrics_output().await;
+        let s = parse_cpu_metrics(cpu_power, sys.cpus()[0].brand())
+            .await
+            .expect("parse cpu metrics failed");
         let cpu_power = format!(
             "{}e_cluster_active: {}\np_cluster_active: {}\ne_cluster_freq_mhz: {}\np_cluster_freq_mhz: {}\ncpu_w: {}\ngpu_w: {}\nane_w: {}\npackage_w: {}\n",
             tcolor::Fg(tcolor::Yellow),
@@ -240,7 +216,10 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
     Ok(())
 }
 
-fn parse_cpu_metrics(powermetrics_output: String, model_name: &str) -> CPUMetrics {
+async fn parse_cpu_metrics(
+    powermetrics_output: String,
+    model_name: &str,
+) -> Result<CPUMetrics, Box<dyn std::error::Error>> {
     let lines: Vec<&str> = powermetrics_output.lines().collect();
     let mut cpu_metrics = CPUMetrics::default();
 
@@ -309,5 +288,5 @@ fn parse_cpu_metrics(powermetrics_output: String, model_name: &str) -> CPUMetric
         }
     }
 
-    cpu_metrics
+    Ok(cpu_metrics)
 }
