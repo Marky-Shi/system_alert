@@ -1,11 +1,8 @@
-use std::{io, sync::mpsc, thread, time::Duration};
+use crate::cli::get_powermetrics_output;
+use std::sync::mpsc;
+use std::{io, thread, time::Duration};
 use sysinfo::{Components, Networks, System};
-use termion::{
-    color as tcolor,
-    event::{Event, Key},
-    input::TermRead,
-    raw::IntoRawMode,
-};
+use termion::{color as tcolor, raw::IntoRawMode};
 use tui::text::Text;
 use tui::{
     backend::TermionBackend,
@@ -15,25 +12,34 @@ use tui::{
     Terminal,
 };
 
-use crate::cli::get_disk_info;
-pub fn check_exit() -> mpsc::Receiver<bool> {
-    let (tx, rx) = mpsc::channel();
+use regex::Regex;
+use std::str;
 
-    thread::spawn(move || {
-        let stdin = std::io::stdin();
+#[derive(Default, Debug)]
+struct CPUMetrics {
+    e_cluster_active: i32,
+    p_cluster_active: i32,
+    e_cluster_freq_mhz: i32,
+    p_cluster_freq_mhz: i32,
+    cpu_w: f64,
+    gpu_w: f64,
+    ane_w: f64,
+    package_w: f64,
+}
 
-        for event in stdin.events() {
-            let c = event.expect("get stdin event failed");
-            match c {
-                Event::Key(Key::Char('q')) => break,
-                _ => continue,
-            };
-        }
-
-        tx.send(true).unwrap();
-    });
-
-    rx
+impl std::fmt::Display for CPUMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "e_cluster_active: {}\n p_cluster_active: {}\n e_cluster_freq_mhz: {}\n p_cluster_freq_mhz: {}\n cpu_w: {}\n gpu_w: {}\n ane_w: {}\n package_w: {}\n",
+        self.e_cluster_active,
+        self.p_cluster_active,
+        self.p_cluster_freq_mhz,
+        self.p_cluster_freq_mhz,
+        self.cpu_w,
+        self.gpu_w,
+        self.ane_w,
+        self.package_w,
+        )
+    }
 }
 
 pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
@@ -57,8 +63,32 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
             .iter()
             .map(|cpu| cpu.cpu_usage())
             .collect::<Vec<_>>();
-        
-        let disk_info = get_disk_info();
+
+        let disk_info:Vec<String> = sys.processes().iter().map(|(pid, processor)| {
+            format!("pid:{} cpu usage:{}% read_bytes:{} read_bytes_total: {} write_bytes:{} write_bytes_total:{}\n",
+            pid,
+            processor.cpu_usage(),
+            processor.disk_usage().read_bytes,
+            processor.disk_usage().total_read_bytes,
+            processor.disk_usage().written_bytes,
+            processor.disk_usage().total_written_bytes,
+           )
+        }).collect();
+
+        let cpu_power = get_powermetrics_output();
+        let s = parse_cpu_metrics(cpu_power, sys.cpus()[0].brand());
+        let cpu_power = format!(
+            "{}e_cluster_active: {}\np_cluster_active: {}\ne_cluster_freq_mhz: {}\np_cluster_freq_mhz: {}\ncpu_w: {}\ngpu_w: {}\nane_w: {}\npackage_w: {}\n",
+            tcolor::Fg(tcolor::Yellow),
+            s.e_cluster_active,
+            s.p_cluster_active,
+            s.e_cluster_freq_mhz,
+            s.p_cluster_freq_mhz,
+            s.cpu_w,
+            s.gpu_w,
+            s.ane_w,
+            s.package_w,
+        );
 
         // Get network information
         let networks = Networks::new_with_refreshed_list();
@@ -89,21 +119,6 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
             })
             .collect();
 
-        // Get processes information
-        let process_info: Vec<String> = sys
-            .processes()
-            .iter()
-            .map(|(pid, process)| {
-                format!(
-                    "{}[{}] {:?} {:?}",
-                    tcolor::Fg(tcolor::Yellow),
-                    pid,
-                    process.name(),
-                    process.disk_usage()
-                )
-            })
-            .collect();
-
         terminal.draw(|f| {
             // Create a layout with two vertical chunks: one for the top half and one for the bottom half
             let chunks = Layout::default()
@@ -124,9 +139,8 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
                 .constraints(
                     [
                         Constraint::Percentage(20), // Left third
-                        Constraint::Percentage(10), // middle left
-                        Constraint::Percentage(17), // middle right 
-                        Constraint::Percentage(33),
+                        Constraint::Percentage(20), // middle right 
+                        Constraint::Percentage(40),
                         Constraint::Percentage(20) // Right third
                     ]
                     .as_ref(),
@@ -138,39 +152,50 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
                 .direction(Direction::Horizontal)
                 .constraints(
                     [
-                        Constraint::Percentage(50),// LEFT
-                        Constraint::Percentage(50), // RIGHT
+                        Constraint::Percentage(80),// LEFT
+                        Constraint::Percentage(20), // RIGHT
                          // Right half
                     ]
                     .as_ref(),
                 )
                 .split(chunks[1]);
-
-            // Create a block for CPUINFO
-            let cpu_info_block = Block::default().title("CPUINFO").borders(Borders::ALL);
-            let cpu_info = Paragraph::new(Text::raw(cpu_usages.iter().enumerate().map(|(i, usage)| {
+            let os_info  = format!(
+                "System name:             {:?}\nSystem kernel version:   {:?}\nSystem OS version:       {:?}\nSystem host name:        {:?}\nSystem CPU architecture: {:?}\nSystem CPU Name:        {:?}",
+                System::name().unwrap(),
+                System::kernel_version().unwrap(),
+                System::os_version().unwrap(),
+                System::host_name().unwrap(),
+                System::cpu_arch().unwrap(),
+                sys.cpus()[0].brand(),
+            );
+            let cpu_info = cpu_usages.iter().enumerate().map(|(i, usage)| {
                 format!("{}CPU {}: {:.2}%",tcolor::Fg(tcolor::Red), i, usage)
-            }).collect::<Vec<_>>().join("\n")))
-                .block(cpu_info_block);
-            f.render_widget(cpu_info, top_chunks[1]);
+            }).collect::<Vec<_>>().join("\n");
+            // Create a block for OSINFO
+            let os_info_block = Block::default().title("OSINFO").borders(Borders::ALL);
+            let os_info = Paragraph::new(Text::raw(
+                os_info + cpu_info.as_str()
+            ))
+                .block(os_info_block);
+            f.render_widget(os_info, top_chunks[0]);
 
             // Create a block for Component Temperatures
             let component_info_block = Block::default().title("Component Temperatures").borders(Borders::ALL);
             let component_info_paragraph = Paragraph::new(Text::raw(component_temps.join("\n")))
                 .block(component_info_block);
-            f.render_widget(component_info_paragraph, top_chunks[2]);
+            f.render_widget(component_info_paragraph, top_chunks[1]);
 
             // Create a block for DiskINFO
-            let disk_info_block = Block::default().title("DiskINFO").borders(Borders::ALL);
-            let disk_info_paragraph = Paragraph::new(Text::raw(disk_info))
+            let disk_info_block = Block::default().title("DiskINFO && process INFO").borders(Borders::ALL);
+            let disk_info_paragraph = Paragraph::new(Text::raw(disk_info.join("\n")))
                 .block(disk_info_block);
-            f.render_widget(disk_info_paragraph, top_chunks[3]);
+            f.render_widget(disk_info_paragraph, top_chunks[2]);
 
             // Create a block for NetworkINFO
             let network_info_block = Block::default().title("NetworkINFO").borders(Borders::ALL);
             let network_info_paragraph = Paragraph::new(Text::raw(network_info.join("\n")))
                 .block(network_info_block);
-            f.render_widget(network_info_paragraph, top_chunks[4]);
+            f.render_widget(network_info_paragraph, top_chunks[3]);
 
             // Create a block for MemoryINFO
             let memory_info_block = Block::default().title("MemoryINFO").borders(Borders::ALL);
@@ -195,23 +220,10 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
                 .label(format!("{}%", memory_percentage));
             f.render_widget(memory_gauge, bottom_chunks[0]); // Adjust to be within the MemoryINFO block
 
-            // Create a block for OSINFO
-            let os_info_block = Block::default().title("OSINFO").borders(Borders::ALL);
-            let os_info = Paragraph::new(Text::raw(format!(
-                "System name:             {:?}\nSystem kernel version:   {:?}\nSystem OS version:       {:?}\nSystem host name:        {:?}\nSystem CPU architecture: {:?}\nSystem CPU Name:        {:?}",
-                System::name().unwrap(),
-                System::kernel_version().unwrap(),
-                System::os_version().unwrap(),
-                System::host_name().unwrap(),
-                System::cpu_arch().unwrap(),
-                sys.cpus()[0].brand(),
-            )))
-                .block(os_info_block);
-            f.render_widget(os_info, top_chunks[0]);
 
             // Create a block for Process info
-            let process_info_block = Block::default().title("Process Info").borders(Borders::ALL);
-            let process_info_paragraph = Paragraph::new(Text::raw(process_info.join("\n")))
+            let process_info_block = Block::default().title("CPU Power").borders(Borders::ALL);
+            let process_info_paragraph = Paragraph::new(Text::raw(cpu_power))
                 .block(process_info_block);
             f.render_widget(process_info_paragraph, bottom_chunks[1]);
         })?;
@@ -226,4 +238,76 @@ pub fn get_system_info(receiver: mpsc::Receiver<bool>) -> io::Result<()> {
 
     terminal.show_cursor()?;
     Ok(())
+}
+
+fn parse_cpu_metrics(powermetrics_output: String, model_name: &str) -> CPUMetrics {
+    let lines: Vec<&str> = powermetrics_output.lines().collect();
+    let mut cpu_metrics = CPUMetrics::default();
+
+    let mut e_cluster_active_sum = 0.0;
+    let mut p_cluster_active_sum = 0.0;
+    let mut e_cluster_freq_sum = 0.0;
+    let mut p_cluster_freq_sum = 0.0;
+    let mut e_cluster_count = 0;
+    let mut p_cluster_count = 0;
+
+    let max_cores = if model_name == "Apple M3 Max" { 15 } else { 11 };
+
+    for i in 0..=max_cores {
+        let active_re = Regex::new(&format!(r"CPU {} active residency:\s+(\d+\.\d+)%", i)).unwrap();
+        let freq_re = Regex::new(&format!(r"^CPU\s+{}\s+frequency:\s+(\d+)\s+MHz$", i)).unwrap();
+
+        for line in &lines {
+            if let Some(caps) = active_re.captures(line) {
+                let active_residency: f64 = caps[1].parse().unwrap();
+                if i <= 3 {
+                    e_cluster_active_sum += active_residency;
+                    e_cluster_count += 1;
+                } else {
+                    p_cluster_active_sum += active_residency;
+                    p_cluster_count += 1;
+                }
+            }
+
+            if let Some(caps) = freq_re.captures(line) {
+                let active_freq: f64 = caps[1].parse().unwrap();
+                if i <= 3 {
+                    e_cluster_freq_sum += active_freq;
+                    e_cluster_count += 1;
+                } else {
+                    p_cluster_freq_sum += active_freq;
+                    p_cluster_count += 1;
+                }
+            }
+        }
+    }
+
+    if e_cluster_count > 0 {
+        cpu_metrics.e_cluster_active = (e_cluster_active_sum / e_cluster_count as f64) as i32;
+        cpu_metrics.e_cluster_freq_mhz = (e_cluster_freq_sum / e_cluster_count as f64) as i32;
+    }
+
+    if p_cluster_count > 0 {
+        cpu_metrics.p_cluster_active = (p_cluster_active_sum / p_cluster_count as f64) as i32;
+        cpu_metrics.p_cluster_freq_mhz = (p_cluster_freq_sum / p_cluster_count as f64) as i32;
+    }
+
+    for line in lines {
+        if line.contains("ANE Power") {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            cpu_metrics.ane_w = fields[2].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+        } else if line.contains("CPU Power") {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            cpu_metrics.cpu_w = fields[2].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+        } else if line.contains("GPU Power") {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            cpu_metrics.gpu_w = fields[2].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+        } else if line.contains("Combined Power (CPU + GPU + ANE)") {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            cpu_metrics.package_w =
+                fields[7].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+        }
+    }
+
+    cpu_metrics
 }

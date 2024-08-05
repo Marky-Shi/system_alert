@@ -2,6 +2,12 @@ use clap::Command;
 use libc::getuid;
 use std::process::exit;
 use std::process::Command as stdcomm;
+use std::sync::mpsc;
+use std::thread;
+use termion::{
+    event::{Event, Key},
+    input::TermRead,
+};
 
 pub fn cli() -> Command {
     Command::new("system-alert")
@@ -28,4 +34,38 @@ pub fn get_disk_info() -> String {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     format!("\n{}\n", stdout)
+}
+
+pub fn get_powermetrics_output() -> String {
+    let output = stdcomm::new("powermetrics")
+        .arg("-n")
+        .arg("1")
+        .output()
+        .expect("Failed to execute powermetrics");
+
+    if !output.status.success() {
+        panic!("Failed to run powermetrics");
+    }
+
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+pub fn check_exit() -> mpsc::Receiver<bool> {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let stdin = std::io::stdin();
+
+        for event in stdin.events() {
+            let c = event.expect("get stdin event failed");
+            match c {
+                Event::Key(Key::Char('q')) => break,
+                _ => continue,
+            };
+        }
+
+        tx.send(true).unwrap();
+    });
+
+    rx
 }
