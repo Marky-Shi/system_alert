@@ -17,10 +17,13 @@ use tokio::sync::mpsc as tokio_mpsc;
 pub async fn get_system_info(
     mut receiver: tokio_mpsc::Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let stdout = io::stdout().into_raw_mode()?;
-    let backend = TermionBackend::new(stdout);
+    let stderr = io::stderr().into_raw_mode()?;
+    let backend = TermionBackend::new(stderr);
     let mut terminal = Terminal::new(backend)?;
     let mut sys = System::new_all();
+
+    let mut networks = Networks::new_with_refreshed_list();
+    let mut components = Components::new_with_refreshed_list();
 
     loop {
         // Update all information of our `System` struct.
@@ -38,7 +41,7 @@ pub async fn get_system_info(
             .map(|cpu| cpu.cpu_usage())
             .collect::<Vec<_>>();
 
-        let disk_info:Vec<String> = sys.processes().iter().map(|(pid, processor)| {
+        let disk_info: Vec<String> = sys.processes().iter().map(|(pid, processor)| {
             format!("pid:{} cpu usage:{}% read_bytes:{} read_bytes_total: {} write_bytes:{} write_bytes_total:{}\n",
             pid,
             processor.cpu_usage(),
@@ -50,7 +53,7 @@ pub async fn get_system_info(
         }).collect();
 
         let cpu_power = get_powermetrics_output().await;
-        let s = parse_cpu_metrics(cpu_power, sys.cpus()[0].brand())
+        let s = parse_cpu_metrics(cpu_power)
             .await
             .expect("parse cpu metrics failed");
         let cpu_power = format!(
@@ -66,8 +69,9 @@ pub async fn get_system_info(
             s.package_w,
         );
 
+        networks.refresh(true);
+        components.refresh(true);
         // Get network information
-        let networks = Networks::new_with_refreshed_list();
         let network_info: Vec<String> = networks
             .iter()
             .map(|(interface_name, data)| {
@@ -82,7 +86,6 @@ pub async fn get_system_info(
             .collect();
 
         // Get component temperatures
-        let components = Components::new_with_refreshed_list();
         let component_temps: Vec<String> = components
             .iter()
             .map(|component| {
@@ -90,7 +93,7 @@ pub async fn get_system_info(
                     "{}{}: {:.2}°C",
                     tcolor::Fg(tcolor::LightGreen),
                     component.label(),
-                    component.temperature().unwrap()
+                    component.temperature().unwrap_or(0.0) // 使用 unwrap_or 避免 panic
                 )
             })
             .collect();
@@ -211,14 +214,13 @@ pub async fn get_system_info(
             break;
         }
     }
-
+    terminal.clear()?;
     terminal.show_cursor()?;
     Ok(())
 }
 
 async fn parse_cpu_metrics(
     powermetrics_output: String,
-    model_name: &str,
 ) -> Result<CPUMetrics, Box<dyn std::error::Error>> {
     let lines: Vec<&str> = powermetrics_output.lines().collect();
     let mut cpu_metrics = CPUMetrics::default();
@@ -230,33 +232,27 @@ async fn parse_cpu_metrics(
     let mut e_cluster_count = 0;
     let mut p_cluster_count = 0;
 
-    let max_cores = if model_name == "Apple M3 Max" { 15 } else { 11 };
-
-    for i in 0..=max_cores {
-        let active_re = Regex::new(&format!(r"CPU {} active residency:\s+(\d+\.\d+)%", i)).unwrap();
-        let freq_re = Regex::new(&format!(r"^CPU\s+{}\s+frequency:\s+(\d+)\s+MHz$", i)).unwrap();
-
-        for line in &lines {
-            if let Some(caps) = active_re.captures(line) {
-                let active_residency: f64 = caps[1].parse().unwrap();
-                if i <= 3 {
-                    e_cluster_active_sum += active_residency;
-                    e_cluster_count += 1;
-                } else {
-                    p_cluster_active_sum += active_residency;
-                    p_cluster_count += 1;
-                }
+    
+    for line in &lines {
+        if let Some(caps) = Regex::new(r"CPU (\d+) active residency:\s+(\d+\.\d+)%")?.captures(line) {
+            let core_id: usize = caps[1].parse()?;
+            let active_residency: f64 = caps[2].parse()?;
+            if core_id <= 3 {
+                e_cluster_active_sum += active_residency;
+                e_cluster_count += 1;
+            } else {
+                p_cluster_active_sum += active_residency;
+                p_cluster_count += 1;
             }
+        }
 
-            if let Some(caps) = freq_re.captures(line) {
-                let active_freq: f64 = caps[1].parse().unwrap();
-                if i <= 3 {
-                    e_cluster_freq_sum += active_freq;
-                    e_cluster_count += 1;
-                } else {
-                    p_cluster_freq_sum += active_freq;
-                    p_cluster_count += 1;
-                }
+        if let Some(caps) = Regex::new(r"^CPU\s+(\d+)\s+frequency:\s+(\d+)\s+MHz$")?.captures(line) {
+            let core_id: usize = caps[1].parse()?;
+            let active_freq: f64 = caps[2].parse()?;
+            if core_id <= 3 {
+                e_cluster_freq_sum += active_freq;
+            } else {
+                p_cluster_freq_sum += active_freq;
             }
         }
     }
@@ -274,17 +270,16 @@ async fn parse_cpu_metrics(
     for line in lines {
         if line.contains("ANE Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.ane_w = fields[2].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+            cpu_metrics.ane_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
         } else if line.contains("CPU Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.cpu_w = fields[2].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+            cpu_metrics.cpu_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
         } else if line.contains("GPU Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.gpu_w = fields[2].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+            cpu_metrics.gpu_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
         } else if line.contains("Combined Power (CPU + GPU + ANE)") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.package_w =
-                fields[7].trim_end_matches("mW").parse::<f64>().unwrap() / 1000.0;
+            cpu_metrics.package_w = fields[7].trim_end_matches("mW").parse::<f64>()? / 1000.0;
         }
     }
 
