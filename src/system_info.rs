@@ -11,8 +11,15 @@ use tui::{
     Terminal,
 };
 
+#[allow(unused)]
+use lazy_static::lazy_static;
 use regex::Regex;
 use tokio::sync::mpsc as tokio_mpsc;
+
+lazy_static::lazy_static! {
+    static ref ACTIVE_RESIDENCY_REGEX: Regex = Regex::new(r"CPU (\d+) active residency:\s+(\d+\.\d+)%").unwrap();
+    static ref FREQUENCY_REGEX: Regex = Regex::new(r"^CPU\s+(\d+)\s+frequency:\s+(\d+)\s+MHz$").unwrap();
+}
 
 pub async fn get_system_info(
     mut receiver: tokio_mpsc::Receiver<bool>,
@@ -232,9 +239,8 @@ async fn parse_cpu_metrics(
     let mut e_cluster_count = 0;
     let mut p_cluster_count = 0;
 
-    
     for line in &lines {
-        if let Some(caps) = Regex::new(r"CPU (\d+) active residency:\s+(\d+\.\d+)%")?.captures(line) {
+        if let Some(caps) = ACTIVE_RESIDENCY_REGEX.captures(line) {
             let core_id: usize = caps[1].parse()?;
             let active_residency: f64 = caps[2].parse()?;
             if core_id <= 3 {
@@ -246,7 +252,7 @@ async fn parse_cpu_metrics(
             }
         }
 
-        if let Some(caps) = Regex::new(r"^CPU\s+(\d+)\s+frequency:\s+(\d+)\s+MHz$")?.captures(line) {
+        if let Some(caps) = FREQUENCY_REGEX.captures(line) {
             let core_id: usize = caps[1].parse()?;
             let active_freq: f64 = caps[2].parse()?;
             if core_id <= 3 {
@@ -255,19 +261,7 @@ async fn parse_cpu_metrics(
                 p_cluster_freq_sum += active_freq;
             }
         }
-    }
 
-    if e_cluster_count > 0 {
-        cpu_metrics.e_cluster_active = (e_cluster_active_sum / e_cluster_count as f64) as i32;
-        cpu_metrics.e_cluster_freq_mhz = (e_cluster_freq_sum / e_cluster_count as f64) as i32;
-    }
-
-    if p_cluster_count > 0 {
-        cpu_metrics.p_cluster_active = (p_cluster_active_sum / p_cluster_count as f64) as i32;
-        cpu_metrics.p_cluster_freq_mhz = (p_cluster_freq_sum / p_cluster_count as f64) as i32;
-    }
-
-    for line in lines {
         if line.contains("ANE Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
             cpu_metrics.ane_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
@@ -281,6 +275,16 @@ async fn parse_cpu_metrics(
             let fields: Vec<&str> = line.split_whitespace().collect();
             cpu_metrics.package_w = fields[7].trim_end_matches("mW").parse::<f64>()? / 1000.0;
         }
+    }
+
+    if e_cluster_count > 0 {
+        cpu_metrics.e_cluster_active = (e_cluster_active_sum / e_cluster_count as f64) as i32;
+        cpu_metrics.e_cluster_freq_mhz = (e_cluster_freq_sum / e_cluster_count as f64) as i32;
+    }
+
+    if p_cluster_count > 0 {
+        cpu_metrics.p_cluster_active = (p_cluster_active_sum / p_cluster_count as f64) as i32;
+        cpu_metrics.p_cluster_freq_mhz = (p_cluster_freq_sum / p_cluster_count as f64) as i32;
     }
 
     Ok(cpu_metrics)

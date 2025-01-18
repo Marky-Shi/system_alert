@@ -12,7 +12,7 @@ pub fn cli() -> Command {
     Command::new("system-alert")
         .bin_name("sysalert")
         .about("MacOS System Alert")
-        .author("Scc")
+        .author("marky")
         .version("0.1.0")
 }
 
