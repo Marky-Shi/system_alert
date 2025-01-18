@@ -90,7 +90,7 @@ pub async fn get_system_info(
                     "{}{}: {:.2}°C",
                     tcolor::Fg(tcolor::LightGreen),
                     component.label(),
-                    component.temperature()
+                    component.temperature().unwrap()
                 )
             })
             .collect();
@@ -141,7 +141,7 @@ pub async fn get_system_info(
                 System::kernel_version().unwrap(),
                 System::os_version().unwrap(),
                 System::host_name().unwrap(),
-                System::cpu_arch().unwrap(),
+                System::cpu_arch(),
                 sys.cpus()[0].brand(),
             );
             let cpu_info = cpu_usages.iter().enumerate().map(|(i, usage)| {

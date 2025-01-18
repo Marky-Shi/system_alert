@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = "4.5.11"
-termion = "4.0.2"
-sysinfo = "0.31.0"
-libc = "0.2.155"
+clap = "4.5.26"
+termion = "4.0.3"
+sysinfo = "0.33.1"
+libc = "0.2.169"
 tui = { version = "0.19", default-features = false, features = ['termion'] }
-regex = "1.7.0"
-tokio ={ version = "1.25.0", features = ["full"] }
+regex = "1.11.1"
+tokio ={ version = "1.43.0", features = ["full"] }
 
 
 [profile.release]
