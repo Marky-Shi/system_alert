@@ -264,16 +264,24 @@ async fn parse_cpu_metrics(
 
         if line.contains("ANE Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.ane_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            if let Some(power) = fields.get(2) {
+                cpu_metrics.ane_w = power.trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            }
         } else if line.contains("CPU Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.cpu_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            if let Some(power) = fields.get(2) {
+                cpu_metrics.cpu_w = power.trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            }
         } else if line.contains("GPU Power") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.gpu_w = fields[2].trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            if let Some(power) = fields.get(2) {
+                cpu_metrics.gpu_w = power.trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            }
         } else if line.contains("Combined Power (CPU + GPU + ANE)") {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            cpu_metrics.package_w = fields[7].trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            if let Some(power) = fields.get(7) {
+                cpu_metrics.package_w = power.trim_end_matches("mW").parse::<f64>()? / 1000.0;
+            }
         }
     }
 
