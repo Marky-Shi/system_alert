@@ -3,12 +3,21 @@ use system_alert::{
     system_info::get_system_info,
 };
 
+use log::{info, error};
+use env_logger;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+    
+    info!("System monitor starting");
     check_root().await?;
     let receiver = check_exit().await;
-    get_system_info(receiver)
-        .await
-        .expect("get system info failed");
+    
+    match get_system_info(receiver).await {
+        Ok(_) => info!("System monitor exited normally"),
+        Err(e) => error!("System monitor error: {}", e),
+    }
+    
     Ok(())
 }

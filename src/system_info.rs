@@ -59,7 +59,7 @@ pub async fn get_system_info(
            )
         }).collect();
 
-        let cpu_power = get_powermetrics_output().await;
+        let cpu_power = get_powermetrics_output().await?;
         let s = parse_cpu_metrics(cpu_power)
             .await
             .expect("parse cpu metrics failed");
