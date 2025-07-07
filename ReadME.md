@@ -282,3 +282,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Uses [TUI-rs](https://github.com/fdehau/tui-rs) for terminal interface
 - Leverages [sysinfo](https://github.com/GuillaumeGomez/sysinfo) for system metrics
 - Powered by [Tokio](https://tokio.rs/) for async runtime
+
