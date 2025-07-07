@@ -2,6 +2,19 @@
 
 A high-performance, feature-rich system monitoring tool for macOS with special optimizations for Apple Silicon chips. This tool provides real-time system metrics with an intuitive terminal user interface, smart notifications, and comprehensive configuration options.
 
+## 🎯 Overview
+
+System Alert is a professional-grade system monitoring application designed specifically for macOS, with enhanced support for Apple Silicon processors. It offers real-time monitoring of CPU, memory, battery, temperature, network, and power consumption with a beautiful terminal-based interface.
+
+### 🌟 Highlights
+
+- **🔋 Advanced Battery Monitoring**: Real-time battery health, cycle count, and charging status
+- **⚡ Apple Silicon Optimization**: E-cluster/P-cluster monitoring with detailed power metrics
+- **🎨 Beautiful TUI Interface**: Clean, organized four-quadrant layout with progress bars
+- **📊 Real-time Data**: Live system metrics with configurable refresh rates
+- **🔔 Smart Notifications**: Configurable threshold-based alerts
+- **⚙️ Highly Configurable**: TOML-based configuration with CLI overrides
+
 ## 🚀 Key Features & Optimizations
 
 ### Performance Improvements
@@ -56,6 +69,8 @@ sudo cargo run -- --minimal
 sudo cargo run -- --config custom-config.toml
 ```
 
+![image](images/image.png)
+
 ## 🎮 Usage & Controls
 
 ### Command Line Options
@@ -76,12 +91,39 @@ Options:
 - **r**: Force refresh
 
 ### Interface Layout
-1. **🔵 CPU Section**: CPU core usage and Apple Silicon power metrics
-2. **🔴 Power Monitor**: Real-time power consumption analysis with visual bars
-3. **🟢 Memory Monitor**: Detailed memory statistics with usage visualization
-4. **🟡 Temperature Monitor**: Component temperatures with smart status indicators
-5. **🟣 Process Monitor**: Top processes sorted by CPU usage
-6. **🔵 Network Monitor**: Real-time network traffic statistics
+
+The application features a modern four-quadrant layout:
+
+1. **🔵 CPU Section** (Top Left): 
+   - CPU core usage with individual core monitoring
+   - Apple Silicon E-cluster/P-cluster metrics
+   - Real-time frequency and power consumption
+
+2. **🔴 Power Monitor** (Top Right):
+   - Battery status with health percentage
+   - Charging state and time remaining
+   - Power adapter wattage and cycle count
+   - Comprehensive power analytics
+
+3. **🟢 Memory Monitor** (Bottom Left):
+   - RAM usage with detailed breakdown
+   - Swap memory statistics
+   - Memory pressure indicators
+
+4. **🟡 Temperature Monitor** (Bottom Left):
+   - Component temperature readings
+   - Thermal throttling status
+   - Fan speed monitoring
+
+5. **🟣 Process Monitor** (Bottom Right):
+   - Top processes by CPU usage
+   - Memory consumption per process
+   - Real-time process statistics
+
+6. **🔵 Network Monitor** (Bottom Right):
+   - Network interface statistics
+   - Bytes transmitted/received
+   - Packet counts and rates
 
 ## ⚙️ Configuration Options
 
@@ -141,15 +183,16 @@ Optimized architecture with separation of concerns for better maintainability an
 
 ```
 src/
-├── main.rs              # 带异步事件循环的应用程序入口点
-├── cli.rs               # 命令行解析和输入处理
-├── config.rs            # 配置管理 (TOML)
-├── data_collector.rs    # 异步系统数据收集
-├── ui.rs                # 终端用户界面 (TUI)
-├── notification.rs      # 智能通知系统
-├── history.rs           # 历史数据跟踪
-├── types.rs             # 数据结构和类型
-└── system_info.rs       # 传统兼容性模块
+├── main.rs              # Application entry point with async event loop
+├── cli.rs               # Command line parsing and input handling
+├── config.rs            # Configuration management (TOML)
+├── data_collector.rs    # Async system data collection
+├── battery_collector.rs # Advanced battery data collection
+├── ui.rs                # Terminal user interface (TUI)
+├── notification.rs      # Smart notification system
+├── history.rs           # Historical data tracking
+├── types.rs             # Data structures and types
+└── system_info.rs       # Legacy compatibility module
 ```
 
 ### Key Improvements
@@ -165,11 +208,11 @@ src/
 ### Build Optimization
 ```toml
 [profile.release]
-strip = true           # 移除调试符号
-opt-level = "z"        # 针对大小优化
-lto = true            # 链接时优化
-codegen-units = 1     # 单个代码生成单元以获得更好的优化
-panic = "abort"       # 更小的二进制大小
+strip = true           # Remove debug symbols
+opt-level = "z"        # Optimize for size
+lto = true            # Link-time optimization
+codegen-units = 1     # Single codegen unit for better optimization
+panic = "abort"       # Smaller binary size
 ```
 
 ### Runtime Optimization

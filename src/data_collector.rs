@@ -1,4 +1,4 @@
-use crate::{cli::get_powermetrics_output, types::*};
+use crate::{cli::get_powermetrics_output, battery_collector::FastBatteryCollector, types::*};
 use sysinfo::{Components, Networks, System};
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,7 @@ pub struct DataCollector {
     last_powermetrics: Option<Instant>,
     cached_cpu_metrics: Option<CPUMetrics>,
     powermetrics_cache_duration: Duration,
+    battery_collector: FastBatteryCollector,
 }
 
 impl DataCollector {
@@ -20,6 +21,7 @@ impl DataCollector {
             last_powermetrics: None,
             cached_cpu_metrics: None,
             powermetrics_cache_duration: Duration::from_secs(2),
+            battery_collector: FastBatteryCollector::new(),
         }
     }
 
@@ -32,6 +34,7 @@ impl DataCollector {
             last_powermetrics: None,
             cached_cpu_metrics: None,
             powermetrics_cache_duration: Duration::from_secs(1),
+            battery_collector: FastBatteryCollector::new(),
         }
     }
 
@@ -51,7 +54,7 @@ impl DataCollector {
         let process_info = self.collect_process_info();
         let total_power = cpu_info.power_metrics.package_w;
 
-        let battery_info = self.collect_battery_info().await;
+        let battery_info = self.battery_collector.get_battery_info().await;
         let thermal_info = self.collect_thermal_info().await;
         let performance_metrics = self.collect_performance_metrics(&cpu_info, total_power).await;
         let system_health = self.collect_system_health().await;
@@ -134,15 +137,21 @@ impl DataCollector {
     }
 
     fn get_fallback_cpu_metrics(&self) -> CPUMetrics {
+        // Use real CPU usage as basis for fallback metrics
+        let avg_usage = self.system.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / self.system.cpus().len() as f32;
+        
+        // Estimate based on actual CPU usage
+        let estimated_power = (avg_usage / 100.0) * 15.0; // Scale with usage
+        
         CPUMetrics {
-            e_cluster_active: 50, // Estimated values
-            p_cluster_active: 30,
-            e_cluster_freq_mhz: 2400,
-            p_cluster_freq_mhz: 3200,
-            ane_w: 0.5,
-            cpu_w: 5.0,
-            gpu_w: 2.0,
-            package_w: 8.0,
+            e_cluster_active: (avg_usage * 0.6) as i32, // E-cores typically more active
+            p_cluster_active: (avg_usage * 0.4) as i32, // P-cores less active
+            e_cluster_freq_mhz: if avg_usage > 50.0 { 2400 } else { 1800 },
+            p_cluster_freq_mhz: if avg_usage > 70.0 { 3200 } else { 2400 },
+            ane_w: (estimated_power * 0.05) as f64,
+            cpu_w: (estimated_power * 0.6) as f64,
+            gpu_w: (estimated_power * 0.2) as f64,
+            package_w: estimated_power as f64,
         }
     }
 
@@ -210,33 +219,65 @@ impl DataCollector {
             .collect()
     }
 
-    async fn collect_battery_info(&self) -> BatteryInfo {
-        // Simplified battery info - no external commands to avoid deadlock
-        BatteryInfo {
-            percentage: 85.0,  // Placeholder
-            is_charging: false,
-            is_plugged: true,
-            health_percentage: 95.0,
-            cycle_count: 100,
-            time_remaining: Some(300), // 5 hours
-            power_adapter_wattage: 67.0,
-            current_capacity: 4500,
-            design_capacity: 4700,
-            voltage: 12.5,
-            amperage: 1.2,
-            temperature: 35.0,
-        }
-    }
 
 
     async fn collect_thermal_info(&self) -> ThermalInfo {
-        // Simplified thermal info - no external commands to avoid deadlock
-        ThermalInfo {
-            fan_speeds: vec![1800, 1850], // Typical fan speeds
-            thermal_throttling: false,
-            heat_dissipation_rate: 15.0,
-            thermal_pressure: 20,
+        let mut thermal_info = ThermalInfo::default();
+        
+        // Get real thermal pressure from system
+        if let Ok(output) = tokio::process::Command::new("sysctl")
+            .arg("-n")
+            .arg("machdep.xcpm.cpu_thermal_level")
+            .output()
+            .await
+        {
+            if let Ok(thermal_str) = String::from_utf8(output.stdout) {
+                if let Ok(thermal_level) = thermal_str.trim().parse::<u8>() {
+                    thermal_info.thermal_pressure = thermal_level * 10; // Convert to percentage
+                }
+            }
         }
+        
+        // Check for thermal throttling via CPU frequency scaling
+        thermal_info.thermal_throttling = thermal_info.thermal_pressure > 50;
+        
+        // Get fan speeds from powermetrics if available
+        if let Ok(output) = tokio::process::Command::new("powermetrics")
+            .arg("--samplers")
+            .arg("smc")
+            .arg("-n")
+            .arg("1")
+            .arg("--show-initial-usage")
+            .output()
+            .await
+        {
+            if let Ok(power_str) = String::from_utf8(output.stdout) {
+                let mut fan_speeds = Vec::new();
+                for line in power_str.lines() {
+                    if line.contains("Fan") && line.contains("RPM") {
+                        if let Some(rpm_str) = line.split_whitespace().find(|s| s.ends_with("RPM")) {
+                            if let Ok(rpm) = rpm_str.trim_end_matches("RPM").parse::<u32>() {
+                                fan_speeds.push(rpm);
+                            }
+                        }
+                    }
+                }
+                if !fan_speeds.is_empty() {
+                    thermal_info.fan_speeds = fan_speeds;
+                }
+            }
+        }
+        
+        // Estimate heat dissipation based on thermal pressure
+        thermal_info.heat_dissipation_rate = match thermal_info.thermal_pressure {
+            0..=20 => 5.0,
+            21..=40 => 10.0,
+            41..=60 => 15.0,
+            61..=80 => 20.0,
+            _ => 25.0,
+        };
+        
+        thermal_info
     }
 
     async fn collect_performance_metrics(&self, cpu_info: &CpuInfo, total_power: f64) -> PerformanceMetrics {
@@ -274,15 +315,71 @@ impl DataCollector {
     }
 
     async fn collect_system_health(&self) -> SystemHealthInfo {
-        // Simplified system health - no external commands to avoid deadlock
-        SystemHealthInfo {
-            uptime_seconds: 86400, // 1 day placeholder
-            sleep_wake_efficiency: 95.0,
-            power_quality_score: 85,
-            system_load_1min: 0.5,
-            system_load_5min: 0.8,
-            system_load_15min: 1.2,
+        // Get real system health data
+        let mut health_info = SystemHealthInfo::default();
+        
+        // Get real uptime
+        if let Ok(output) = tokio::process::Command::new("sysctl")
+            .arg("-n")
+            .arg("kern.boottime")
+            .output()
+            .await
+        {
+            if let Ok(boottime_str) = String::from_utf8(output.stdout) {
+                // Parse boottime and calculate uptime
+                if let Some(timestamp_str) = boottime_str.split_whitespace().nth(3) {
+                    if let Ok(boot_timestamp) = timestamp_str.trim_end_matches(',').parse::<i64>() {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        health_info.uptime_seconds = (now - boot_timestamp) as u64;
+                    }
+                }
+            }
         }
+        
+        // Get real load averages
+        if let Ok(output) = tokio::process::Command::new("sysctl")
+            .arg("-n")
+            .arg("vm.loadavg")
+            .output()
+            .await
+        {
+            if let Ok(loadavg_str) = String::from_utf8(output.stdout) {
+                // Parse "{ 2.66 2.75 2.97 }" format
+                let loads: Vec<f64> = loadavg_str
+                    .trim()
+                    .trim_start_matches('{')
+                    .trim_end_matches('}')
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                
+                if loads.len() >= 3 {
+                    health_info.system_load_1min = loads[0];
+                    health_info.system_load_5min = loads[1];
+                    health_info.system_load_15min = loads[2];
+                }
+            }
+        }
+        
+        // Calculate power quality score based on load and other factors
+        let avg_load = (health_info.system_load_1min + health_info.system_load_5min + health_info.system_load_15min) / 3.0;
+        health_info.power_quality_score = if avg_load < 1.0 {
+            95
+        } else if avg_load < 2.0 {
+            85
+        } else if avg_load < 3.0 {
+            75
+        } else {
+            65
+        };
+        
+        // Estimate sleep/wake efficiency (simplified)
+        health_info.sleep_wake_efficiency = if avg_load < 1.5 { 95.0 } else { 85.0 };
+        
+        health_info
     }
 }
 
