@@ -1,0 +1,23 @@
+# System Alert Configuration File
+
+refresh_rate = 1
+minimal_mode = false
+
+[thresholds]
+cpu_warning = 75.0
+cpu_critical = 90.0
+memory_warning = 75
+memory_critical = 90
+temperature_warning = 70.0
+temperature_critical = 85.0
+
+[display]
+show_temperatures = true
+show_network = true
+show_processes = true
+show_history = true
+history_size = 60
+
+[notifications]
+enabled = true
+cooldown_seconds = 30
