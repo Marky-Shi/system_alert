@@ -69,7 +69,7 @@ sudo cargo run -- --minimal
 sudo cargo run -- --config custom-config.toml
 ```
 
-![image](images/image.png)
+![image](images/ui.png)
 
 ## 🎮 Usage & Controls
 
