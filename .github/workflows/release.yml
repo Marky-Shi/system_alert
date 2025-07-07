@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/registry
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Cache cargo index
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/git
+        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Cache target directory
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run tests
+      run: cargo test --verbose
+
+    - name: Build release
+      run: cargo build --release --verbose
+
+    - name: Test release binary
+      run: |
+        chmod +x scripts/test-release.sh
+        ./scripts/test-release.sh
+
+    - name: Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+        fi
+        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+        echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_OUTPUT
+
+    - name: Create distribution package
+      run: |
+        chmod +x scripts/build-release.sh
+        ./scripts/build-release.sh
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        cat > release-notes.md << EOF
+        # System Alert ${{ steps.version.outputs.VERSION }}
+        
+        Advanced macOS System Monitor with real-time metrics and beautiful TUI interface.
+        
+        ## 🚀 Features
+        
+        - **🔋 Advanced Battery Monitoring**: Real-time battery health, cycle count, and charging status
+        - **⚡ Apple Silicon Optimization**: E-cluster/P-cluster monitoring with detailed power metrics  
+        - **🎨 Beautiful TUI Interface**: Clean, organized four-quadrant layout with progress bars
+        - **📊 Real-time Data**: Live system metrics with configurable refresh rates
+        - **🔔 Smart Notifications**: Configurable threshold-based alerts
+        - **⚙️ Highly Configurable**: TOML-based configuration with CLI overrides
+        
+        ## 📋 System Requirements
+        
+        - **macOS**: 10.15+ (Optimized for Apple Silicon)
+        - **Root Privileges**: Required for accessing system metrics via \`powermetrics\`
+        - **Terminal**: Any modern terminal emulator with Unicode support
+        
+        ## 🛠 Quick Install
+        
+        \`\`\`bash
+        # Download and install
+        curl -L -o system-alert.tar.gz https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/system-alert-${{ steps.version.outputs.VERSION }}-macos.tar.gz
+        tar -xzf system-alert.tar.gz
+        cd system-alert-*
+        ./install.sh
+        
+        # Run
+        sudo system-alert
+        \`\`\`
+        
+        ## 🎮 Usage
+        
+        \`\`\`bash
+        sudo system-alert                    # Default settings
+        sudo system-alert --refresh 2       # Custom refresh rate
+        sudo system-alert --minimal         # Minimal mode
+        sudo system-alert --help           # Show help
+        \`\`\`
+        
+        ## 🔐 Verification
+        
+        \`\`\`bash
+        shasum -a 256 -c system-alert-${{ steps.version.outputs.VERSION }}-checksums.txt
+        \`\`\`
+        
+        ---
+        
+        **Built on:** $(date)
+        **Commit:** ${{ github.sha }}
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: System Alert ${{ steps.version.outputs.VERSION }}
+        body_path: release-notes.md
+        draft: false
+        prerelease: false
+        files: |
+          dist/system-alert-${{ steps.version.outputs.VERSION }}-macos.tar.gz
+          dist/system-alert-${{ steps.version.outputs.VERSION }}-checksums.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: system-alert-${{ steps.version.outputs.VERSION }}
+        path: |
+          dist/
+          release-builds/
+        retention-days: 30
